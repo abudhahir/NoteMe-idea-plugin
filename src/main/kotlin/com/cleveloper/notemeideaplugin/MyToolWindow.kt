@@ -626,33 +626,40 @@ private fun MyToolWindowContent(project: Project) {
             ) { element ->
                 val nodePath = remember(element.data) {
                     if (element is Tree.Element.Node<*>) {
-                        // Heading node → show the directory path (may not exist yet if no notes added)
                         val dirPath = IndexManager.getHeadingDirPath(notesRoot, element.data)
                         if (dirPath != null) File(notesRoot, dirPath).absolutePath else notesRoot.absolutePath
                     } else {
-                        // Leaf note → resolve via index first, then fallback to recursive search
                         IndexManager.getFilePathForNote(notesRoot, element.data)?.absolutePath
                             ?: findFileForElement(element.data, notesRoot)?.absolutePath
                             ?: "Location unknown"
                     }
                 }
 
+                val isMissing = element.data in missingFileTitles
+                val isDiskSourced = when (element) {
+                    is Tree.Element.Node<*> -> element.data in diskSourcedHeadings
+                    is Tree.Element.Leaf<*> -> element.data in diskSourcedNotes
+                    else -> false
+                }
+                var rowHovered by remember(element.data) { mutableStateOf(false) }
                 var elementPosition by remember(element.data) { mutableStateOf(IntOffset.Zero) }
 
                 TooltipArea(
                     tooltip = {
                         Box(modifier = Modifier
-                                .background(popupBackground)
-                                .border(1.dp, JewelTheme.globalColors.borders.normal)
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                            Text(nodePath)
+                            .background(popupBackground)
+                            .border(1.dp, JewelTheme.globalColors.borders.normal)
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(if (isMissing) "$nodePath (file missing)" else nodePath)
                         }
                     },
                     modifier = Modifier.fillMaxWidth()
                         .onGloballyPositioned { coordinates ->
                             elementPosition = coordinates.positionInWindow().round()
                         }
+                        .onPointerEvent(PointerEventType.Enter) { rowHovered = true }
+                        .onPointerEvent(PointerEventType.Exit) { rowHovered = false }
                         .onPointerEvent(PointerEventType.Release) {
                             if (it.button == PointerButton.Secondary || it.buttons.isSecondaryPressed) {
                                 contextMenuTarget = element.data
@@ -667,20 +674,63 @@ private fun MyToolWindowContent(project: Project) {
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier.padding(vertical = 2.dp, horizontal = 4.dp).fillMaxWidth()
                     ) {
-                        val iconKey = if (element is Tree.Element.Node<*>) {
-                            AllIconsKeys.Nodes.Folder
-                        } else {
-                            AllIconsKeys.FileTypes.Text
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f, fill = false)
+                        ) {
+                            val iconKey = if (element is Tree.Element.Node<*>) {
+                                AllIconsKeys.Nodes.Folder
+                            } else {
+                                AllIconsKeys.FileTypes.Text
+                            }
+                            Icon(
+                                key = iconKey,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = element.data,
+                                color = if (isMissing) JewelTheme.contentColor.copy(alpha = 0.4f)
+                                        else JewelTheme.contentColor
+                            )
+                            if (isDiskSourced) {
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(
+                                    key = AllIconsKeys.Actions.Upload,
+                                    contentDescription = "From disk",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
-                        Icon(
-                            key = iconKey,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(element.data)
+                        if (isMissing && rowHovered) {
+                            IconButton(
+                                onClick = {
+                                    val pair = missingFilePairs.firstOrNull { it.first == element.data }
+                                    if (pair != null) {
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            IndexManager.removeFromIndex(notesRoot, pair.first, pair.second)
+                                            withContext(Dispatchers.Main) {
+                                                val remaining = missingFilePairs - pair
+                                                missingFilePairs = remaining
+                                                missingFileTitles = remaining.map { it.first }.toSet()
+                                                refreshTree()
+                                            }
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.size(16.dp)
+                            ) {
+                                Icon(
+                                    key = AllIconsKeys.Actions.Cancel,
+                                    contentDescription = "Remove broken link",
+                                    modifier = Modifier.size(12.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
