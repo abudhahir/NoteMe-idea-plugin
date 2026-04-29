@@ -107,6 +107,165 @@ object IndexManager {
     }
 
     /**
+     * Bidirectional sync: walks the disk, adds new directories as headings and
+     * new .md files as links in index.md, and detects links whose files are missing.
+     *
+     * Does NOT call notifyMutation(). The caller must coordinate state updates
+     * and call refreshTree() after storing the returned SyncResult.
+     *
+     * Link insertion position: new links are inserted after the last DIRECT link
+     * under the parent heading (before any sub-headings), tracked via lastDirectLinkLine.
+     * New headings are inserted at the end of the parent heading's full block.
+     */
+    fun syncFromDisk(notesRoot: File): SyncResult {
+        val indexFile = getIndexFile(notesRoot)
+        val lines = indexFile.readLines().toMutableList()
+
+        // ── Local data structure ─────────────────────────────────────────────────
+        data class HeadingTriple(var lineIndex: Int, val title: String, val dirPath: String)
+
+        // ── Mutable tracking maps ────────────────────────────────────────────────
+        val headingTriples = mutableListOf<HeadingTriple>()
+        val lastDirectLinkLine = mutableMapOf<Int, Int>()
+
+        // ── Local helpers ────────────────────────────────────────────────────────
+
+        fun blockEnd(triple: HeadingTriple): Int {
+            val myLevel = headingLevel(lines[triple.lineIndex])
+            for (t in headingTriples) {
+                if (t.lineIndex > triple.lineIndex && headingLevel(lines[t.lineIndex]) <= myLevel) {
+                    return t.lineIndex - 1
+                }
+            }
+            return lines.size - 1
+        }
+
+        fun insertAt(at: Int, content: String) {
+            lines.add(at, content)
+            headingTriples.forEach { if (it.lineIndex >= at) it.lineIndex++ }
+            val copy = lastDirectLinkLine.toMap()
+            lastDirectLinkLine.clear()
+            copy.forEach { (k, v) ->
+                lastDirectLinkLine[if (k >= at) k + 1 else k] = if (v >= at) v + 1 else v
+            }
+        }
+
+        fun toRelPath(file: File): String =
+            file.relativeTo(notesRoot).path.replace(File.separatorChar, '/')
+
+        // ── Pass 1: raw line scan of index.md ────────────────────────────────────
+        val knownDirPaths = mutableSetOf<String>()
+        val knownRelPaths = mutableSetOf<String>()
+        val originalLinks = mutableListOf<Pair<String, String>>()
+        val stack = mutableListOf<HeadingTriple>()
+        var currentHeadingLineIndex = -1
+
+        for ((idx, line) in lines.withIndex()) {
+            val hm = Regex("^(#+)\\s+(.*)$").find(line)
+            if (hm != null) {
+                val level = hm.groupValues[1].length
+                val title = hm.groupValues[2].trim()
+                while (stack.isNotEmpty() && headingLevel(lines[stack.last().lineIndex]) >= level) {
+                    stack.removeAt(stack.size - 1)
+                }
+                val parentPath = stack.lastOrNull()?.dirPath ?: ""
+                val dirPath = if (parentPath.isEmpty()) title else "$parentPath/$title"
+                val triple = HeadingTriple(idx, title, dirPath)
+                headingTriples.add(triple)
+                knownDirPaths.add(dirPath)
+                lastDirectLinkLine[idx] = idx
+                currentHeadingLineIndex = idx
+                stack.add(triple)
+            } else {
+                val lm = Regex("^- \\[(.*)\\]\\((.*)\\)$").find(line)
+                if (lm != null) {
+                    knownRelPaths.add(lm.groupValues[2])
+                    originalLinks.add(lm.groupValues[1] to lm.groupValues[2])
+                    if (currentHeadingLineIndex != -1) {
+                        lastDirectLinkLine[currentHeadingLineIndex] = idx
+                    }
+                }
+            }
+        }
+
+        // ── Pass 2: disk walk ─────────────────────────────────────────────────────
+        val addedHeadings = mutableListOf<String>()
+        val addedLinks = mutableListOf<String>()
+
+        fun insertHeading(relDir: String, title: String) {
+            val level = relDir.count { it == '/' } + 1
+            val prefix = "#".repeat(level)
+            val parentDirPath = relDir.substringBeforeLast("/", "")
+            val at = if (parentDirPath.isEmpty()) {
+                val lastTopLevel = headingTriples.lastOrNull { !it.dirPath.contains('/') }
+                if (lastTopLevel != null) blockEnd(lastTopLevel) + 1 else lines.size
+            } else {
+                val parentTriple = headingTriples.firstOrNull { it.dirPath == parentDirPath }
+                if (parentTriple != null) blockEnd(parentTriple) + 1 else lines.size
+            }
+            insertAt(at, "$prefix $title")
+            val newTriple = HeadingTriple(at, title, relDir)
+            val pos = headingTriples.indexOfFirst { it.lineIndex > at }
+            if (pos == -1) headingTriples.add(newTriple) else headingTriples.add(pos, newTriple)
+            lastDirectLinkLine[at] = at
+            knownDirPaths.add(relDir)
+            addedHeadings.add(title)
+        }
+
+        fun ensureOthers() {
+            if ("Others" !in knownDirPaths) insertHeading("Others", "Others")
+        }
+
+        fun insertLink(noteTitle: String, relPath: String, parentDirPath: String) {
+            val parentTriple = if (parentDirPath.isEmpty()) {
+                ensureOthers()
+                headingTriples.first { it.dirPath == "Others" }
+            } else {
+                headingTriples.firstOrNull { it.dirPath == parentDirPath } ?: return
+            }
+            val at = (lastDirectLinkLine[parentTriple.lineIndex] ?: parentTriple.lineIndex) + 1
+            insertAt(at, "- [$noteTitle]($relPath)")
+            lastDirectLinkLine[parentTriple.lineIndex] = at
+            knownRelPaths.add(relPath)
+            addedLinks.add(noteTitle)
+        }
+
+        fun walkDir(dir: File, depth: Int) {
+            if (depth > 10) return
+            val children = dir.listFiles()
+                ?.sortedWith(compareBy({ !it.isDirectory }, { it.name }))
+                ?: return
+            for (child in children) {
+                if (child.isDirectory) {
+                    val relDir = toRelPath(child)
+                    if (relDir !in knownDirPaths) insertHeading(relDir, child.name)
+                    walkDir(child, depth + 1)
+                } else if (child.isFile && child.extension == "md" && child.name != INDEX_FILE_NAME) {
+                    val relPath = toRelPath(child)
+                    if (relPath !in knownRelPaths) {
+                        val parentDirPath = relPath.substringBeforeLast("/", "")
+                        insertLink(child.nameWithoutExtension, relPath, parentDirPath)
+                    }
+                }
+            }
+        }
+
+        walkDir(notesRoot, 0)
+
+        // ── Pass 3: detect missing files ──────────────────────────────────────────
+        val missingFiles = originalLinks.filter { (_, relPath) ->
+            !File(notesRoot, relPath).exists()
+        }
+
+        // ── Write & return ────────────────────────────────────────────────────────
+        indexFile.writeText(lines.joinToString("\n"))
+        LocalFileSystem.getInstance().refreshAndFindFileByIoFile(indexFile)
+        ensureDirectoryStructure(notesRoot)
+
+        return SyncResult(addedHeadings, addedLinks, missingFiles)
+    }
+
+    /**
      * Removes the first line in index.md that exactly matches "- [title](relativePath)".
      * Does not delete any file on disk. Caller must call refreshTree() after this.
      */
