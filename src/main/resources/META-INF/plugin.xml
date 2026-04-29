@@ -1,0 +1,58 @@
+<!-- Plugin Configuration File: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
+<idea-plugin>
+    <!-- Unique identifier of the plugin. It should be FQN, cannot be changed between the plugin versions. -->
+    <id>com.cleveloper.NoteMe-idea-plugin</id>
+
+    <!-- Public plugin name should be written in Title Case.
+         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-name -->
+    <name>NoteMe</name>
+
+    <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
+    <vendor url="https://github.com/cleveloper/NoteMe-idea-plugin">Cleveloper</vendor>
+
+    <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
+         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-description -->
+    <description><![CDATA[
+        A plugin for managing notes directly within the IDE. Supports Markdown and easy access via the toolbar.
+    ]]></description>
+
+    <!-- Product and plugin compatibility requirements.
+         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.lang</depends>
+    <depends>org.intellij.plugins.markdown</depends>
+
+    <resource-bundle>messages.MyMessageBundle</resource-bundle>
+    <!-- Extensions defined by the plugin.
+         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="NoteMe" factoryClass="com.cleveloper.notemeideaplugin.MyToolWindowFactory"
+                    icon="AllIcons.Toolwindows.ToolWindowPalette"/>
+        <postStartupActivity implementation="com.cleveloper.notemeideaplugin.NoteMeStartupActivity"/>
+        <nonProjectFileWritingAccessExtension
+            implementation="com.cleveloper.notemeideaplugin.NoteFileWritingAccessExtension"/>
+    </extensions>
+
+    <actions>
+        <action id="NoteMe.CreateNote" class="com.cleveloper.notemeideaplugin.CreateNoteAction"
+                text="Create Note" description="Create a new note from anywhere">
+            <keyboard-shortcut keymap="$default" first-keystroke="control alt N"/>
+        </action>
+        <action id="NoteMe.OpenNoteMe" class="com.cleveloper.notemeideaplugin.OpenNoteAction"
+                text="Open NoteMe" description="Open NoteMe tool window">
+            <keyboard-shortcut keymap="$default" first-keystroke="control alt O"/>
+        </action>
+
+        <group id="NoteMe.EditorTitleGroup" text="NoteMe Actions" popup="false">
+            <reference ref="NoteMe.CreateNote"/>
+            <reference ref="NoteMe.OpenNoteMe"/>
+            <add-to-group group-id="EditorContextBarMenu" anchor="last"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="NavBarToolBar" anchor="last"/>
+            <add-to-group group-id="MainToolbarRight" anchor="last"/>
+            <add-to-group group-id="Markdown.Toolbar.Left" anchor="last"/>
+            <add-to-group group-id="Markdown.Toolbar.Right" anchor="last"/>
+            <add-to-group group-id="EditorTabPopupMenu" anchor="last"/>
+        </group>
+    </actions>
+</idea-plugin>
