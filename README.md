@@ -1,117 +1,204 @@
-# IntelliJ Platform Plugin Template
+# NoteMe — IntelliJ IDEA Plugin
 
-[![Twitter Follow](https://img.shields.io/badge/follow-%40JBPlatform-1DA1F2?logo=twitter)](https://twitter.com/JBPlatform)
-[![Developers Forum](https://img.shields.io/badge/JetBrains%20Platform-Join-blue)][jb:forum]
+A note management plugin that lives inside your IDE. Create, organise, and search Markdown notes without leaving IntelliJ. Notes are stored as plain Markdown files on disk and organised through a structured `index.md` file, keeping them readable and portable outside the IDE.
 
-## Plugin template structure
+---
 
-A generated project contains the following content structure:
+## Features
+
+### Note Tree
+- Displays all notes as a hierarchical tree, driven by the heading structure in `~/NoteMeNotes/index.md`
+- Folder nodes correspond to Markdown headings (`#`, `##`); leaf nodes are individual note files
+- Hover over any node to see its full path on disk as a tooltip
+
+### Add Note (Tool Window)
+- Click the **+** icon in the tool window toolbar to enter a note name inline
+- A topic picker popup lists all headings from `index.md` — click a heading to place the note there
+- The note file is created inside the matching subdirectory and opened immediately in the editor
+- The tree refreshes automatically after creation
+
+### Search
+- Click the **Search** icon in the toolbar to open the search bar
+- Filters the tree by matching against both the note name and the full note file content
+- Press `Escape` or click **Cancel** to clear search and restore the full tree
+
+### Right-Click Context Menu
+Right-click any node in the tree for quick actions:
+
+| Action | Description |
+|---|---|
+| Rename | Renames the note file and updates the link in `index.md` |
+| Delete | Deletes the file with a confirmation dialog and removes its index entry |
+| Copy Path | Copies the absolute file path to the clipboard |
+| Open in File System | Reveals the file or folder in Finder / Explorer |
+
+### Global Keyboard Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+Alt+N` | Create a new note from anywhere in the IDE |
+| `Ctrl+Alt+O` | Open the NoteMe tool window |
+
+Both actions are also accessible from the editor context bar, editor right-click menu, nav bar toolbar, main toolbar, and Markdown editor toolbars.
+
+### Source Capture When Creating Notes via Shortcut
+
+When `Ctrl+Alt+N` is pressed while an editor file is open, the created note automatically includes a source context block at the bottom:
+
+**Without a selection** — appends a link to the current file:
+```markdown
+---
+
+**Source:** [MyService.kt](file:///Users/you/project/src/MyService.kt)
+```
+
+**With text selected** — appends the file with line reference, the selected text as a fenced code block, and creates an IntelliJ line bookmark at the selection start:
+```markdown
+---
+
+**Source:** [MyService.kt:L42-L57](file:///Users/you/project/src/MyService.kt)
 
 ```
-.
-├── .run/                   Predefined Run/Debug Configurations
-├── build/                  Output build directory
-├── gradle
-│   ├── wrapper/            Gradle Wrapper
-├── src                     Plugin sources
-│   ├── main
-│   │   ├── kotlin/         Kotlin production sources
-│   │   └── resources/      Resources - plugin.xml, icons, messages
-├── .gitignore              Git ignoring rules
-├── build.gradle.kts        Gradle build configuration
-├── gradle.properties       Gradle configuration properties
-├── gradlew                 *nix Gradle Wrapper script
-├── gradlew.bat             Windows Gradle Wrapper script
-├── README.md               README
-└── settings.gradle.kts     Gradle project settings
+fun processPayment(order: Order): Result {
+    ...
+}
 ```
 
-In addition to the configuration files, the most crucial part is the `src` directory, which contains our implementation
-and the manifest for our plugin – [plugin.xml][file:plugin.xml].
+*IntelliJ bookmark added at L42-L57 — navigate via the Bookmarks panel*
+```
 
-> [!NOTE]
-> To use Java in your plugin, create the `/src/main/java` directory.
+The `file://` link opens the source file in the editor. For line-precise navigation back to the exact selection, open **View → Tool Windows → Bookmarks**.
 
-## Plugin configuration file
+### Auto Tree Refresh
+The tool window tree updates automatically whenever a note is added via the keyboard shortcut, even if the tool window was already open in the background.
 
-The plugin configuration file is a [plugin.xml][file:plugin.xml] file located in the `src/main/resources/META-INF`
-directory.
-It provides general information about the plugin, its dependencies, extensions, and listeners.
+---
 
-You can read more about this file in the [Plugin Configuration File][docs:plugin.xml] section of our documentation.
+## Notes Storage
 
-If you're still not quite sure what this is all about, read our
-introduction: [What is the IntelliJ Platform?][docs:intro]
+All notes are stored in `~/NoteMeNotes/` as plain Markdown files.
 
-$H$H Predefined Run/Debug configurations
+```
+~/NoteMeNotes/
+├── index.md                          ← source of truth for tree structure
+├── Knowledge Base/
+│   ├── Java/
+│   │   └── JavaGenerics.md
+│   └── Components/
+│       └── ButtonDesign.md
+├── Tools/
+│   └── GradleCheatsheet.md
+├── How to/
+├── Tutorials/
+└── Others/
+    └── Welcome.md
+```
 
-Within the default project structure, there is a `.run` directory provided containing predefined *Run/Debug
-configurations* that expose corresponding Gradle tasks:
+`index.md` uses standard Markdown headings for topic folders and link entries for notes:
 
-| Configuration name | Description                                                                                                                                                                         |
-|--------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Run Plugin         | Runs [`:runIde`][gh:intellij-platform-gradle-plugin-runIde] IntelliJ Platform Gradle Plugin task. Use the *Debug* icon for plugin debugging.                                        |
-| Run Tests          | Runs [`:test`][gradle:lifecycle-tasks] Gradle task.                                                                                                                                 |
-| Run Verifications  | Runs [`:verifyPlugin`][gh:intellij-platform-gradle-plugin-verifyPlugin] IntelliJ Platform Gradle Plugin task to check the plugin compatibility against the specified IntelliJ IDEs. |
+```markdown
+# Knowledge Base
+## Java
+- [JavaGenerics](Knowledge Base/Java/JavaGenerics.md)
+## Components
+# Tools
+- [GradleCheatsheet](Tools/GradleCheatsheet.md)
+# How to
+# Tutorials
+# Others
+- [Welcome](Others/Welcome.md)
+```
 
-> [!NOTE]
-> You can find the logs from the running task in the `idea.log` tab.
+On first run, a default `index.md` with the following headings is created automatically, along with a `Welcome.md` note under **Others**:
 
-## Publishing the plugin
+- Knowledge Base → Java, Components
+- Tools
+- How to
+- Tutorials
+- Others
 
-> [!TIP]
-> Make sure to follow all guidelines listed in [Publishing a Plugin][docs:publishing] to follow all recommended and
-> required steps.
+---
 
-Releasing a plugin to [JetBrains Marketplace](https://plugins.jetbrains.com) is a straightforward operation that uses
-the `publishPlugin` Gradle task provided by
-the [intellij-platform-gradle-plugin][gh:intellij-platform-gradle-plugin-docs].
+## Usage Guide
 
-You can also upload the plugin to the [JetBrains Plugin Repository](https://plugins.jetbrains.com/plugin/upload)
-manually via UI.
+### Creating your first note
 
-## Useful links
+1. Open any project in IntelliJ IDEA.
+2. Open the **NoteMe** tool window from the side panel, or press `Ctrl+Alt+O`.
+3. Click the **+** (Add) icon in the toolbar.
+4. Type a note name and press `Enter`.
+5. In the topic picker popup, click the heading you want the note filed under.
+6. The note opens in the editor — start writing.
 
-- [IntelliJ Platform SDK Plugin SDK][docs]
-- [IntelliJ Platform Gradle Plugin Documentation][gh:intellij-platform-gradle-plugin-docs]
-- [IntelliJ Platform Explorer][jb:ipe]
-- [JetBrains Marketplace Quality Guidelines][jb:quality-guidelines]
-- [IntelliJ Platform UI Guidelines][jb:ui-guidelines]
-- [JetBrains Marketplace Paid Plugins][jb:paid-plugins]
-- [IntelliJ SDK Code Samples][gh:code-samples]
+### Creating a note from code context
 
-[docs]: https://plugins.jetbrains.com/docs/intellij
+1. Open any source file in the editor.
+2. Optionally select a block of code you want to reference.
+3. Press `Ctrl+Alt+N`.
+4. Enter a note name → select a topic.
+5. The note is created with your selection captured as a code block and a bookmark added at that line.
 
-[docs:intro]: https://plugins.jetbrains.com/docs/intellij/intellij-platform.html?from=IJPluginTemplate
+### Searching notes
 
-[docs:plugin.xml]: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html?from=IJPluginTemplate
+1. Click the **Search** (magnifier) icon in the NoteMe toolbar, or use `Ctrl+Alt+O` to bring up the window first.
+2. Type to filter — matches note titles and full content of all note files.
+3. Click a result to open the note.
 
-[docs:publishing]: https://plugins.jetbrains.com/docs/intellij/publishing-plugin.html?from=IJPluginTemplate
+### Renaming or deleting a note
 
-[file:plugin.xml]: ./src/main/resources/META-INF/plugin.xml
+Right-click the note in the tree → choose **Rename** or **Delete**.
+Rename updates both the file on disk and the link in `index.md`. Delete removes both.
 
-[gh:code-samples]: https://github.com/JetBrains/intellij-sdk-code-samples
+### Finding notes on disk
 
-[gh:intellij-platform-gradle-plugin]: https://github.com/JetBrains/intellij-platform-gradle-plugin
+Hover over any node to see the full path. Right-click → **Open in File System** to reveal it in Finder / Explorer.
 
-[gh:intellij-platform-gradle-plugin-docs]: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin.html
+---
 
-[gh:intellij-platform-gradle-plugin-runIde]: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-tasks.html#runIde
+## Build & Run
 
-[gh:intellij-platform-gradle-plugin-verifyPlugin]: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-tasks.html#verifyPlugin
+### Prerequisites
+- IntelliJ IDEA 2025.1 or later
+- JDK 21
+- Gradle (wrapper included — no separate install needed)
 
-[gradle:lifecycle-tasks]: https://docs.gradle.org/current/userguide/java_plugin.html#lifecycle_tasks
+### Commands
 
-[jb:github]: https://github.com/JetBrains/.github/blob/main/profile/README.md
+```bash
+# Run plugin in a sandboxed IDE instance
+./gradlew runIde
 
-[jb:forum]: https://platform.jetbrains.com/
+# Build the distributable plugin zip
+./gradlew build
 
-[jb:quality-guidelines]: https://plugins.jetbrains.com/docs/marketplace/quality-guidelines.html
+# Run tests
+./gradlew test
 
-[jb:paid-plugins]: https://plugins.jetbrains.com/docs/marketplace/paid-plugins-marketplace.html
+# Verify plugin compatibility
+./gradlew verifyPlugin
+```
 
-[jb:quality-guidelines]: https://plugins.jetbrains.com/docs/marketplace/quality-guidelines.html
+The plugin zip is output to `build/distributions/`.
 
-[jb:ipe]: https://jb.gg/ipe
+---
 
-[jb:ui-guidelines]: https://jetbrains.github.io/ui
+## Project Structure
+
+```
+src/main/kotlin/com/cleveloper/notemeideaplugin/
+├── IndexManager.kt                    Singleton owning all index.md parsing and mutations
+├── MyToolWindow.kt                    Jewel-based Compose UI — tree, search, add flow, context menu
+├── MyActions.kt                       CreateNoteAction (Ctrl+Alt+N) and OpenNoteAction (Ctrl+Alt+O)
+├── NoteFileWritingAccessExtension.kt  Allows editing note files that live outside the project root
+└── NoteMeStartupActivity.kt           Injects the NoteMe action group into the editor title bar on startup
+```
+
+### Key Dependencies
+
+| Dependency | Version |
+|---|---|
+| IntelliJ Platform | 2025.2.4 (`252.25557+`) |
+| Jewel (Compose UI) | bundled with platform |
+| Kotlin | 2.1.20 |
+| JVM target | Java 21 |
+| Required bundled plugin | `org.intellij.plugins.markdown` |
