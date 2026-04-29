@@ -102,6 +102,11 @@ private fun MyToolWindowContent(project: Project) {
     val mutationCount by IndexManager.mutationCount.collectAsState()
     var selectedElement by remember { mutableStateOf<Tree.Element<String>?>(null) }
     var searchQuery by remember { mutableStateOf("") }
+    // Sync state — populated by the Sync button; cleared and repopulated on each sync
+    var missingFilePairs by remember { mutableStateOf(listOf<Pair<String, String>>()) }
+    var missingFileTitles by remember { mutableStateOf(setOf<String>()) }
+    var diskSourcedHeadings by remember { mutableStateOf(setOf<String>()) }
+    var diskSourcedNotes by remember { mutableStateOf(setOf<String>()) }
     val coroutineScope = rememberCoroutineScope()
     val popupBackground = remember {
         val rgb = javax.swing.UIManager.getColor("Popup.background")?.rgb
@@ -499,6 +504,53 @@ private fun MyToolWindowContent(project: Project) {
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
+                TooltipArea(
+                    tooltip = {
+                        Box(modifier = Modifier
+                                .background(popupBackground)
+                                .border(1.dp, JewelTheme.globalColors.borders.normal)
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                            Text("Open index (landing page)")
+                        }
+                    }
+                ) {
+                    IconButton(onClick = {
+                        val indexFile = IndexManager.getIndexFile(notesRoot)
+                        val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(indexFile)
+                        if (virtualFile != null) {
+                            FileEditorManager.getInstance(project).openFile(virtualFile, true)
+                        }
+                    }, enabled = true) {
+                        Icon(AllIconsKeys.Actions.ListFiles, contentDescription = "Open Index")
+                    }
+                }
+                TooltipArea(
+                    tooltip = {
+                        Box(modifier = Modifier
+                            .background(popupBackground)
+                            .border(1.dp, JewelTheme.globalColors.borders.normal)
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text("Sync from disk")
+                        }
+                    }
+                ) {
+                    IconButton(onClick = {
+                        coroutineScope.launch(Dispatchers.IO) {
+                            val result = IndexManager.syncFromDisk(notesRoot)
+                            withContext(Dispatchers.Main) {
+                                missingFilePairs = result.missingFiles
+                                missingFileTitles = result.missingFiles.map { it.first }.toSet()
+                                diskSourcedHeadings = result.addedHeadings.toSet()
+                                diskSourcedNotes = result.addedLinks.toSet()
+                                refreshTree()
+                            }
+                        }
+                    }, enabled = true) {
+                        Icon(AllIconsKeys.Actions.Refresh, contentDescription = "Sync from disk")
+                    }
+                }
                 TooltipArea(
                     tooltip = {
                         Box(modifier = Modifier
