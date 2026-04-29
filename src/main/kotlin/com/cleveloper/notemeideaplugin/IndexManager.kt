@@ -14,6 +14,12 @@ data class IndexNode(
     val dirPath: String = "" // relative dir path from notesRoot (e.g. "Knowledge Base/Java")
 )
 
+data class SyncResult(
+    val addedHeadings: List<String>,          // heading titles (last path segment) added from disk
+    val addedLinks: List<String>,             // note titles added from disk
+    val missingFiles: List<Pair<String, String>> // (title, relativePath) in index but missing on disk
+)
+
 object IndexManager {
     private const val INDEX_FILE_NAME = "index.md"
 
@@ -23,6 +29,9 @@ object IndexManager {
     private fun notifyMutation() {
         _mutationCount.value++
     }
+
+    private fun headingLevel(line: String): Int =
+        Regex("^(#+)").find(line)?.groupValues?.get(1)?.length ?: 0
     private val DEFAULT_CONTENT = """
         # Knowledge Base
         ## Java
@@ -69,7 +78,48 @@ object IndexManager {
             LocalFileSystem.getInstance().refreshAndFindFileByIoFile(welcomeFile)
             addNoteToIndex(notesRoot, welcomeTitle, "Others")
         }
+        // Ensure the directory structure on disk matches the heading hierarchy in index.md
+        ensureDirectoryStructure(notesRoot)
         return indexFile
+    }
+
+    /**
+     * Creates a directory on disk for every heading node defined in index.md.
+     * This keeps the filesystem structure in sync with the index hierarchy without
+     * waiting for the first note to be added under a heading.
+     */
+    fun ensureDirectoryStructure(notesRoot: File) {
+        val indexFile = File(notesRoot, INDEX_FILE_NAME)
+        if (!indexFile.exists()) return
+        val lines = indexFile.readLines()
+        val stack = mutableListOf<IndexNode>()
+        for (line in lines) {
+            val headingMatch = Regex("^(#+)\\s+(.*)$").find(line) ?: continue
+            val level = headingMatch.groupValues[1].length
+            val title = headingMatch.groupValues[2].trim()
+            while (stack.isNotEmpty() && stack.last().level >= level) stack.removeAt(stack.size - 1)
+            val parentPath = stack.lastOrNull()?.dirPath ?: ""
+            val dirPath = if (parentPath.isEmpty()) title else "$parentPath/$title"
+            val newNode = IndexNode(title, level, dirPath = dirPath)
+            stack.add(newNode)
+            File(notesRoot, dirPath).mkdirs()
+        }
+    }
+
+    /**
+     * Removes the first line in index.md that exactly matches "- [title](relativePath)".
+     * Does not delete any file on disk. Caller must call refreshTree() after this.
+     */
+    fun removeFromIndex(notesRoot: File, title: String, relativePath: String) {
+        val indexFile = getIndexFile(notesRoot)
+        val lines = indexFile.readLines().toMutableList()
+        val target = "- [$title]($relativePath)"
+        val idx = lines.indexOfFirst { it == target }
+        if (idx != -1) {
+            lines.removeAt(idx)
+            indexFile.writeText(lines.joinToString("\n"))
+            LocalFileSystem.getInstance().refreshAndFindFileByIoFile(indexFile)
+        }
     }
 
     fun parseIndex(notesRoot: File): List<IndexNode> {
