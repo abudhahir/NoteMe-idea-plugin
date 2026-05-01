@@ -21,7 +21,7 @@ class CreateNoteAction : AnAction() {
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: ProjectManager.getInstance().openProjects.firstOrNull() ?: return
-        val notesRoot = File(System.getProperty("user.home"), "NoteMeNotes")
+        val notesRoot = NoteMeSettings.getInstance().notesRoot
         val noteName = Messages.showInputDialog(project, "Enter note name", "New Note", null) ?: return
 
         val editor = e.getData(CommonDataKeys.EDITOR)

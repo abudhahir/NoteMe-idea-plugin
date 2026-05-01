@@ -31,6 +31,11 @@
         <postStartupActivity implementation="com.cleveloper.notemeideaplugin.NoteMeStartupActivity"/>
         <nonProjectFileWritingAccessExtension
             implementation="com.cleveloper.notemeideaplugin.NoteFileWritingAccessExtension"/>
+        <applicationService serviceImplementation="com.cleveloper.notemeideaplugin.NoteMeSettings"/>
+        <applicationConfigurable parentId="tools"
+                                 instance="com.cleveloper.notemeideaplugin.NoteMeSettingsConfigurable"
+                                 id="com.cleveloper.notemeideaplugin.NoteMeSettingsConfigurable"
+                                 displayName="NoteMe"/>
     </extensions>
 
     <actions>

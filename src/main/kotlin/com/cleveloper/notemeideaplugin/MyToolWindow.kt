@@ -19,6 +19,8 @@ import com.intellij.openapi.wm.ToolWindowFactory
 import org.jetbrains.jewel.foundation.lazy.rememberSelectableLazyListState
 import org.jetbrains.jewel.bridge.addComposeTab
 import org.jetbrains.jewel.foundation.lazy.tree.buildTree
+import org.jetbrains.jewel.foundation.lazy.tree.TreeBuilder
+import org.jetbrains.jewel.foundation.lazy.tree.TreeGeneratorScope
 import org.jetbrains.jewel.foundation.lazy.tree.rememberTreeState
 import org.jetbrains.jewel.foundation.lazy.tree.Tree
 import org.jetbrains.jewel.ui.component.LazyTree
@@ -65,8 +67,8 @@ import java.awt.Desktop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.rememberCoroutineScope
 
 class MyToolWindowFactory : ToolWindowFactory {
     override fun shouldBeAvailable(project: Project) = true
@@ -81,32 +83,33 @@ class MyToolWindowFactory : ToolWindowFactory {
 @OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Composable
 private fun MyToolWindowContent(project: Project) {
-    val notesRoot = File(System.getProperty("user.home"), "NoteMeNotes")
-    IndexManager.getIndexFile(notesRoot)
-
+    val settings = NoteMeSettings.getInstance()
+    val settingsVersion by settings.settingsVersion.collectAsState()
+    var notesRoot by remember { mutableStateOf(settings.notesRoot) }
     fun getTreeFromIndex(): List<Any> {
-        val rootNodes = IndexManager.parseIndex(notesRoot)
-        fun nodeToTree(node: IndexNode): Any {
-            val children = node.children.map { nodeToTree(it) }.toMutableList<Any>()
-            children.addAll(node.links.map { it.first }) // links are (title, relativePath) pairs
-            return if (children.isEmpty()) {
-                node.title
-            } else {
-                node.title to children
-            }
+        fun scanDir(directory: File): List<Any> {
+            val items = directory.listFiles() ?: return emptyList()
+            val result = mutableListOf<Any>()
+            items.filter { it.isDirectory && !it.name.startsWith(".") }
+                .sortedBy { it.name.lowercase() }
+                .forEach { result.add(it.name to scanDir(it)) }
+            items.filter { it.isFile && it.extension == "md" }
+                .sortedBy { it.name.lowercase() }
+                .forEach { result.add(it.nameWithoutExtension) }
+            return result
         }
-        return rootNodes.map { nodeToTree(it) }
+        return scanDir(notesRoot)
     }
 
-    var treeData by remember { mutableStateOf(getTreeFromIndex()) }
-    val mutationCount by IndexManager.mutationCount.collectAsState()
+    // Start empty — populated on IO thread to avoid EDT violations
+    var treeData by remember { mutableStateOf(emptyList<Any>()) }
     var selectedElement by remember { mutableStateOf<Tree.Element<String>?>(null) }
     var searchQuery by remember { mutableStateOf("") }
-    // Sync state — populated by the Sync button; cleared and repopulated on each sync
     var missingFilePairs by remember { mutableStateOf(listOf<Pair<String, String>>()) }
     var missingFileTitles by remember { mutableStateOf(setOf<String>()) }
     var diskSourcedHeadings by remember { mutableStateOf(setOf<String>()) }
     var diskSourcedNotes by remember { mutableStateOf(setOf<String>()) }
+    var statusMessage by remember { mutableStateOf("Ready") }
     val coroutineScope = rememberCoroutineScope()
     val popupBackground = remember {
         val rgb = javax.swing.UIManager.getColor("Popup.background")?.rgb
@@ -115,47 +118,43 @@ private fun MyToolWindowContent(project: Project) {
         Color(rgb)
     }
 
+    // Startup: create root + default index if needed, then load tree from disk
+    LaunchedEffect(Unit) {
+        statusMessage = "Loading notes..."
+        val newData = withContext(Dispatchers.IO) {
+            IndexManager.getIndexFile(notesRoot)
+            getTreeFromIndex()
+        }
+        treeData = newData
+        statusMessage = "Loaded ${treeData.size} items"
+    }
+
+    // Reload tree when settings change (e.g. root directory)
+    LaunchedEffect(settingsVersion) {
+        if (settingsVersion > 0) {
+            notesRoot = settings.notesRoot
+            statusMessage = "Loading notes from ${notesRoot.absolutePath}..."
+            val newData = withContext(Dispatchers.IO) {
+                IndexManager.getIndexFile(notesRoot)
+                getTreeFromIndex()
+            }
+            treeData = newData
+            statusMessage = "Loaded ${treeData.size} items from ${notesRoot.name}"
+        }
+    }
+
     fun refreshTree() {
+        statusMessage = "Refreshing tree..."
         coroutineScope.launch(Dispatchers.IO) {
             val newData = getTreeFromIndex()
             withContext(Dispatchers.Main) {
                 treeData = newData
+                statusMessage = "Tree refreshed"
             }
         }
     }
 
-    // Refresh the tree whenever IndexManager reports a mutation (e.g., note created via shortcut)
-    LaunchedEffect(mutationCount) {
-        if (mutationCount > 0) {
-            val newData = withContext(Dispatchers.IO) { getTreeFromIndex() }
-            treeData = newData
-        }
-    }
-
-    // Helper to build Jewel Tree from our structured data
-    fun buildJewelTree(data: List<Any>): Tree<String> = buildTree {
-        data.forEach { item ->
-            when (item) {
-                is String -> addLeaf(item)
-                is Pair<*, *> -> {
-                    val (name, children) = item as Pair<String, List<Any>>
-                    addNode(name) {
-                        children.forEach { child ->
-                            when (child) {
-                                is String -> addLeaf(child)
-                                is Pair<*, *> -> {
-                                    val (cName, cChildren) = child as Pair<String, List<Any>>
-                                    addNode(cName) {
-                                        cChildren.forEach { leaf -> addLeaf(leaf.toString()) }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    fun buildJewelTree(data: List<Any>): Tree<String> = buildTree { addItemsToTree(data) }
 
     val filteredTreeData = remember(treeData, searchQuery) {
         if (searchQuery.isEmpty()) {
@@ -216,10 +215,16 @@ private fun MyToolWindowContent(project: Project) {
         // Prefer the index-resolved path; fall back to filesystem scan if not yet indexed
         val file = IndexManager.getFilePathForNote(notesRoot, leafName)
             ?: findFileForElement(leafName, notesRoot)
-            ?: return
+        if (file == null) {
+            statusMessage = "File not found: $leafName"
+            return
+        }
         val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file)
         if (virtualFile != null) {
             FileEditorManager.getInstance(project).openFile(virtualFile, true)
+            statusMessage = "Opened: $leafName"
+        } else {
+            statusMessage = "Cannot open: $leafName"
         }
     }
 
@@ -230,8 +235,10 @@ private fun MyToolWindowContent(project: Project) {
     }
 
     fun finalizeAddNote(heading: String) {
+        statusMessage = "Adding note '$newNodeName'..."
         val noteFile = IndexManager.addNoteToIndex(notesRoot, newNodeName, heading)
         if (noteFile == null) {
+            statusMessage = "Failed to add note — heading '$heading' not found"
             Messages.showErrorDialog(project, "Heading '$heading' not found in index.", "Error")
             return
         }
@@ -240,6 +247,7 @@ private fun MyToolWindowContent(project: Project) {
             FileEditorManager.getInstance(project).openFile(virtualFile, true)
         }
         refreshTree()
+        statusMessage = "Added note '$newNodeName' under '$heading'"
         isAdding = false
         newNodeName = ""
         showHeadingPicker = false
@@ -250,26 +258,32 @@ private fun MyToolWindowContent(project: Project) {
     var contextMenuTarget by remember { mutableStateOf<String?>(null) }
 
     fun renameElement(oldName: String, newName: String) {
-        val file = findFileForElement(oldName, notesRoot) ?: return
+        val file = findFileForElement(oldName, notesRoot)
+        if (file == null) {
+            statusMessage = "Rename failed — '$oldName' not found"
+            return
+        }
         val newFile = File(file.parentFile, if (file.isDirectory) newName else if (newName.endsWith(".md")) newName else "$newName.md")
         if (file.renameTo(newFile)) {
-            // Update index.md to reflect the name change
             val indexFile = IndexManager.getIndexFile(notesRoot)
             val content = indexFile.readText()
             val oldLink = "[$oldName]"
             val newLink = "[$newName]"
             val oldFileLink = "($oldName.md)"
             val newFileLink = "($newName.md)"
-            
+
             val escapedOldName = Regex.escape(oldName)
             val headingRegex = Regex("^(#+)\\s+${escapedOldName}$", RegexOption.MULTILINE)
             val updatedContent = content
                 .replace(headingRegex) { matchResult -> "${matchResult.groupValues[1]} $newName" }
                 .replace(oldLink, newLink)
                 .replace(oldFileLink, newFileLink)
-            
+
             indexFile.writeText(updatedContent)
             refreshTree()
+            statusMessage = "Renamed '$oldName' to '$newName'"
+        } else {
+            statusMessage = "Rename failed — could not rename '$oldName'"
         }
     }
 
@@ -302,21 +316,22 @@ private fun MyToolWindowContent(project: Project) {
     }
 
     fun deleteElement(name: String) {
+        statusMessage = "Deleting '$name'..."
         val file = findFileForElement(name, notesRoot)
         file?.deleteRecursively()
-        
-        // Update index.md
+
         val indexFile = IndexManager.getIndexFile(notesRoot)
         val lines = indexFile.readLines().toMutableList()
         val oldLinkPart = "[$name]"
-        
+
         val updatedLines = lines.filter { line ->
             !line.contains(oldLinkPart) && !line.replace(Regex("^#+\\s+"), "").trim().equals(name, ignoreCase = false)
         }
-        
+
         indexFile.writeText(updatedLines.joinToString("\n"))
         LocalFileSystem.getInstance().refreshAndFindFileByIoFile(indexFile)
         refreshTree()
+        statusMessage = "Deleted '$name'"
     }
 
     Row(modifier = Modifier.fillMaxSize()) {
@@ -532,23 +547,53 @@ private fun MyToolWindowContent(project: Project) {
                             .border(1.dp, JewelTheme.globalColors.borders.normal)
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
-                            Text("Sync from disk")
+                            Text("Sync notes")
                         }
                     }
                 ) {
                     IconButton(onClick = {
-                        coroutineScope.launch(Dispatchers.IO) {
-                            val result = IndexManager.syncFromDisk(notesRoot)
-                            withContext(Dispatchers.Main) {
-                                missingFilePairs = result.missingFiles
-                                missingFileTitles = result.missingFiles.map { it.first }.toSet()
-                                diskSourcedHeadings = result.addedHeadings.toSet()
-                                diskSourcedNotes = result.addedLinks.toSet()
-                                refreshTree()
+                        val choice = Messages.showDialog(
+                            project,
+                            "Choose sync direction:\n\n" +
+                                "Sync from Disk:\n" +
+                                "  Scans your NoteMeNotes folder and adds any new files\n" +
+                                "  or folders found on disk into the index.\n\n" +
+                                "Sync from Index:\n" +
+                                "  Reads the index and creates any missing folders\n" +
+                                "  on disk to match the index structure.",
+                            "Sync Notes",
+                            arrayOf("Sync from Disk", "Sync from Index", "Cancel"),
+                            0,
+                            Messages.getQuestionIcon()
+                        )
+                        when (choice) {
+                            0 -> {
+                                statusMessage = "Syncing from disk..."
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    val result = IndexManager.syncFromDisk(notesRoot)
+                                    withContext(Dispatchers.Main) {
+                                        missingFilePairs = result.missingFiles
+                                        missingFileTitles = result.missingFiles.map { it.first }.toSet()
+                                        diskSourcedHeadings = result.addedHeadings.toSet()
+                                        diskSourcedNotes = result.addedLinks.toSet()
+                                        refreshTree()
+                                        statusMessage = "Synced from disk — ${result.addedHeadings.size} headings, ${result.addedLinks.size} notes added, ${result.missingFiles.size} missing"
+                                    }
+                                }
+                            }
+                            1 -> {
+                                statusMessage = "Syncing from index..."
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    IndexManager.ensureDirectoryStructure(notesRoot)
+                                    withContext(Dispatchers.Main) {
+                                        refreshTree()
+                                        statusMessage = "Synced from index — directories created"
+                                    }
+                                }
                             }
                         }
                     }, enabled = true) {
-                        Icon(AllIconsKeys.Actions.Refresh, contentDescription = "Sync from disk")
+                        Icon(AllIconsKeys.Actions.Refresh, contentDescription = "Sync notes")
                     }
                 }
                 TooltipArea(
@@ -601,6 +646,25 @@ private fun MyToolWindowContent(project: Project) {
                         }
                     }, enabled = deleteEnabled) {
                         Icon(AllIconsKeys.General.Delete, contentDescription = "Delete")
+                    }
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                TooltipArea(
+                    tooltip = {
+                        Box(modifier = Modifier
+                                .background(popupBackground)
+                                .border(1.dp, JewelTheme.globalColors.borders.normal)
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                            Text("NoteMe settings")
+                        }
+                    }
+                ) {
+                    IconButton(onClick = {
+                        com.intellij.openapi.options.ShowSettingsUtil.getInstance()
+                            .showSettingsDialog(project, "com.cleveloper.notemeideaplugin.NoteMeSettingsConfigurable")
+                    }, enabled = true) {
+                        Icon(AllIconsKeys.General.Settings, contentDescription = "Settings")
                     }
                 }
             }
@@ -735,6 +799,20 @@ private fun MyToolWindowContent(project: Project) {
                 }
             }
 
+            Divider(orientation = Orientation.Horizontal)
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .background(popupBackground)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = statusMessage,
+                    color = JewelTheme.contentColor.copy(alpha = 0.7f),
+                    style = TextStyle(fontSize = androidx.compose.ui.unit.TextUnit(11f, androidx.compose.ui.unit.TextUnitType.Sp))
+                )
+            }
+
             if (contextMenuVisible && contextMenuTarget != null) {
                 val target = contextMenuTarget!!
                 Popup(
@@ -773,6 +851,19 @@ private fun MyToolWindowContent(project: Project) {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun TreeGeneratorScope<String>.addItemsToTree(items: List<Any>) {
+    items.forEach { item ->
+        when (item) {
+            is String -> addLeaf(item)
+            is Pair<*, *> -> {
+                val pair = item as Pair<String, List<Any>>
+                addNode(pair.first) { addItemsToTree(pair.second) }
             }
         }
     }

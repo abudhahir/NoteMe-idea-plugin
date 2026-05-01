@@ -78,8 +78,6 @@ object IndexManager {
             LocalFileSystem.getInstance().refreshAndFindFileByIoFile(welcomeFile)
             addNoteToIndex(notesRoot, welcomeTitle, "Others")
         }
-        // Ensure the directory structure on disk matches the heading hierarchy in index.md
-        ensureDirectoryStructure(notesRoot)
         return indexFile
     }
 
@@ -260,7 +258,6 @@ object IndexManager {
         // ── Write & return ────────────────────────────────────────────────────────
         indexFile.writeText(lines.joinToString("\n"))
         LocalFileSystem.getInstance().refreshAndFindFileByIoFile(indexFile)
-        ensureDirectoryStructure(notesRoot)
 
         return SyncResult(addedHeadings, addedLinks, missingFiles)
     }
