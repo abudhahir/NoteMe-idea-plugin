@@ -26,6 +26,10 @@ dependencies {
 
         composeUI()
     }
+
+    // LangChain4j — vector store and embedding for semantic search
+    implementation("dev.langchain4j:langchain4j:1.14.0")
+    implementation("dev.langchain4j:langchain4j-embeddings-all-minilm-l6-v2:1.14.0-beta24")
 }
 
 intellijPlatform {

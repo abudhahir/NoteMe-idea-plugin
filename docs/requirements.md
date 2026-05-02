@@ -28,4 +28,21 @@
    - to open the note from anywhere
 
 
-@
+# Phase 4 — Settings and Configuration
+1. Configurable notes root directory (default: ~/NoteMeNotes/)
+2. Settings page under Settings > Tools > NoteMe
+3. Confirmation dialog when changing root directory
+4. Settings icon in toolbar (right-aligned)
+5. Status bar at bottom of NoteMe window showing activity for all operations
+
+# Phase 5 — Semantic Search (ChromaDB Vector Search)
+1. Local vector store using LangChain4j InMemoryEmbeddingStore with file persistence
+2. ONNX-based sentence embeddings (all-MiniLM-L6-v2) — fully offline
+3. Markdown chunking by heading boundaries with large-section paragraph splitting
+4. Semantic search toolbar button (disabled when ChromaDB is off)
+5. Query popup with text input, ranked results (title, heading, excerpt, score), and stats footer
+6. Re-index button in popup footer
+7. First-enable indexing prompt when ChromaDB is toggled on in settings
+8. Automatic re-indexing after Sync from Disk when reindexOnSync is enabled
+9. Incremental indexing — skips unchanged files based on lastModified timestamp
+10. Index persisted to notesRoot/.chromadb/embedding-store.json

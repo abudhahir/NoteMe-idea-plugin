@@ -22,6 +22,28 @@ A note management plugin that lives inside your IDE. Create, organise, and searc
 - Filters the tree by matching against both the note name and the full note file content
 - Press `Escape` or click **Cancel** to clear search and restore the full tree
 
+### Semantic Search (ChromaDB)
+- Enable in **Settings > Tools > NoteMe** by checking "Enable file-based ChromaDB indexing"
+- Click the **Semantic Search** icon in the toolbar to open the query popup
+- Type a natural language question and press `Enter` — results are ranked by semantic similarity
+- Each result shows the note title, heading path, excerpt, and similarity score
+- Click a result to open the note in the editor
+- Re-index button in the popup footer rebuilds the search index
+- Index is persisted to `<notesRoot>/.chromadb/embedding-store.json` and survives IDE restarts
+- Powered by LangChain4j with ONNX all-MiniLM-L6-v2 embeddings — fully offline, no API keys needed
+
+### Sync
+- Click the **Sync** icon for bidirectional sync options:
+  - **Sync from Disk** — scans notes folder and adds new files/folders into `index.md`
+  - **Sync from Index** — reads `index.md` and creates missing folders on disk
+- When "Re-index notes on sync" is enabled in settings, Sync from Disk also rebuilds the semantic search index
+
+### Settings
+- **Settings > Tools > NoteMe** or click the **gear icon** in the toolbar
+- **Notes root directory** — configurable path (default: `~/NoteMeNotes/`)
+- **Enable file-based ChromaDB indexing** — gates the semantic search feature
+- **Re-index notes on sync** — automatically rebuilds search index after Sync from Disk
+
 ### Right-Click Context Menu
 Right-click any node in the tree for quick actions:
 
@@ -187,10 +209,15 @@ The plugin zip is output to `build/distributions/`.
 ```
 src/main/kotlin/com/cleveloper/notemeideaplugin/
 ├── IndexManager.kt                    Singleton owning all index.md parsing and mutations
-├── MyToolWindow.kt                    Jewel-based Compose UI — tree, search, add flow, context menu
+├── MyToolWindow.kt                    Jewel-based Compose UI — tree, search, add flow, context menu, semantic search popup
 ├── MyActions.kt                       CreateNoteAction (Ctrl+Alt+N) and OpenNoteAction (Ctrl+Alt+O)
 ├── NoteFileWritingAccessExtension.kt  Allows editing note files that live outside the project root
-└── NoteMeStartupActivity.kt           Injects the NoteMe action group into the editor title bar on startup
+├── NoteMeStartupActivity.kt           Injects the NoteMe action group into the editor title bar on startup
+├── NoteMeSettings.kt                  PersistentStateComponent for plugin settings (root dir, ChromaDB flags)
+├── NoteMeSettingsConfigurable.kt      Settings UI under Settings > Tools > NoteMe
+├── MarkdownChunker.kt                 Splits markdown into heading-based chunks for vector indexing
+├── EmbeddingService.kt                ONNX-based sentence embedding (all-MiniLM-L6-v2) via LangChain4j
+└── VectorSearchManager.kt             Vector store management — index, query, re-index, persistence
 ```
 
 ### Key Dependencies
@@ -202,3 +229,5 @@ src/main/kotlin/com/cleveloper/notemeideaplugin/
 | Kotlin | 2.1.20 |
 | JVM target | Java 21 |
 | Required bundled plugin | `org.intellij.plugins.markdown` |
+| LangChain4j | 1.14.0 |
+| LangChain4j ONNX MiniLM | 1.14.0-beta24 |

@@ -1,7 +1,7 @@
 # NoteMe — ChromaDB Vector Search Implementation Plan
 
 **Date:** 2026-05-01
-**Status:** Draft
+**Status:** Implemented
 **Design Doc:** [chromadb-vector-search-design.md](../specs/2026-05-01-chromadb-vector-search-design.md)
 
 ---

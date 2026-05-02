@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -140,6 +141,12 @@ private fun MyToolWindowContent(project: Project) {
             }
             treeData = newData
             statusMessage = "Loaded ${treeData.size} items from ${notesRoot.name}"
+            // Re-initialize vector store if ChromaDB is enabled and root changed
+            if (settings.state.chromaDbEnabled) {
+                withContext(Dispatchers.IO) {
+                    VectorSearchManager.initialize(notesRoot)
+                }
+            }
         }
     }
 
@@ -192,6 +199,15 @@ private fun MyToolWindowContent(project: Project) {
     val deleteEnabled = selectedElement != null
     var isSearching by remember { mutableStateOf(false) }
     val searchFocusRequester = remember { FocusRequester() }
+
+    // Semantic search state
+    var showSemanticSearch by remember { mutableStateOf(false) }
+    var semanticQuery by remember { mutableStateOf("") }
+    var semanticResults by remember { mutableStateOf(emptyList<SearchResult>()) }
+    var isSemanticSearching by remember { mutableStateOf(false) }
+    var semanticQueryTime by remember { mutableStateOf(0L) }
+    val semanticFocusRequester = remember { FocusRequester() }
+    val chromaDbEnabled by remember(settingsVersion) { mutableStateOf(settings.state.chromaDbEnabled) }
 
     var isAdding by remember { mutableStateOf(false) }
     var newNodeName by remember { mutableStateOf("") }
@@ -578,6 +594,16 @@ private fun MyToolWindowContent(project: Project) {
                                         diskSourcedNotes = result.addedLinks.toSet()
                                         refreshTree()
                                         statusMessage = "Synced from disk — ${result.addedHeadings.size} headings, ${result.addedLinks.size} notes added, ${result.missingFiles.size} missing"
+                                        // Re-index if enabled
+                                        if (settings.state.reindexOnSync && settings.state.chromaDbEnabled) {
+                                            statusMessage = "Synced from disk — re-indexing..."
+                                            coroutineScope.launch(Dispatchers.IO) {
+                                                val indexResult = VectorSearchManager.indexAllNotes(notesRoot)
+                                                withContext(Dispatchers.Main) {
+                                                    statusMessage = "Re-indexed ${indexResult.indexedCount} notes, ${indexResult.totalChunks} chunks"
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -646,6 +672,25 @@ private fun MyToolWindowContent(project: Project) {
                         }
                     }, enabled = deleteEnabled) {
                         Icon(AllIconsKeys.General.Delete, contentDescription = "Delete")
+                    }
+                }
+                TooltipArea(
+                    tooltip = {
+                        Box(modifier = Modifier
+                                .background(popupBackground)
+                                .border(1.dp, JewelTheme.globalColors.borders.normal)
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                            Text(if (chromaDbEnabled) "Semantic search (ChromaDB)" else "Enable ChromaDB in Settings to use semantic search")
+                        }
+                    }
+                ) {
+                    IconButton(onClick = {
+                        if (chromaDbEnabled) {
+                            showSemanticSearch = !showSemanticSearch
+                        }
+                    }, enabled = chromaDbEnabled) {
+                        Icon(AllIconsKeys.Actions.Find, contentDescription = "Semantic Search")
                     }
                 }
                 Spacer(modifier = Modifier.weight(1f))
@@ -811,6 +856,206 @@ private fun MyToolWindowContent(project: Project) {
                     color = JewelTheme.contentColor.copy(alpha = 0.7f),
                     style = TextStyle(fontSize = androidx.compose.ui.unit.TextUnit(11f, androidx.compose.ui.unit.TextUnitType.Sp))
                 )
+            }
+
+            if (showSemanticSearch && chromaDbEnabled) {
+                Popup(
+                    alignment = Alignment.Center,
+                    onDismissRequest = { showSemanticSearch = false },
+                    properties = PopupProperties(focusable = true)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(450.dp)
+                            .background(popupBackground)
+                            .border(1.dp, JewelTheme.globalColors.borders.normal)
+                            .padding(12.dp)
+                    ) {
+                        Column {
+                            // Title bar
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Semantic Search", style = TextStyle(fontWeight = FontWeight.Bold))
+                                IconButton(onClick = { showSemanticSearch = false }) {
+                                    Icon(AllIconsKeys.Actions.Cancel, contentDescription = "Close")
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Query input
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(popupBackground)
+                                    .border(1.dp, JewelTheme.globalColors.borders.normal)
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                            ) {
+                                BasicTextField(
+                                    value = semanticQuery,
+                                    onValueChange = { semanticQuery = it },
+                                    modifier = Modifier.fillMaxWidth().focusRequester(semanticFocusRequester)
+                                        .onKeyEvent {
+                                            if (it.type == KeyEventType.KeyDown && it.key == Key.Enter) {
+                                                if (semanticQuery.isNotBlank()) {
+                                                    isSemanticSearching = true
+                                                    coroutineScope.launch(Dispatchers.IO) {
+                                                        val startTime = System.currentTimeMillis()
+                                                        VectorSearchManager.initialize(notesRoot)
+                                                        val results = VectorSearchManager.query(semanticQuery)
+                                                        val elapsed = System.currentTimeMillis() - startTime
+                                                        withContext(Dispatchers.Main) {
+                                                            semanticResults = results
+                                                            semanticQueryTime = elapsed
+                                                            isSemanticSearching = false
+                                                            statusMessage = "Search: ${results.size} results for '${semanticQuery.take(30)}'"
+                                                        }
+                                                    }
+                                                }
+                                                true
+                                            } else if (it.type == KeyEventType.KeyDown && it.key == Key.Escape) {
+                                                showSemanticSearch = false
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        },
+                                    textStyle = TextStyle(color = JewelTheme.contentColor),
+                                    cursorBrush = SolidColor(JewelTheme.contentColor),
+                                    singleLine = true,
+                                    decorationBox = { inner ->
+                                        if (semanticQuery.isEmpty()) {
+                                            Text("Type a question and press Enter...", color = JewelTheme.contentColor.copy(alpha = 0.5f))
+                                        }
+                                        inner()
+                                    }
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Results
+                            if (isSemanticSearching) {
+                                Text("Searching...", color = JewelTheme.contentColor.copy(alpha = 0.6f))
+                            } else if (semanticResults.isNotEmpty()) {
+                                Text(
+                                    "${semanticResults.size} results (${semanticQueryTime}ms)",
+                                    color = JewelTheme.contentColor.copy(alpha = 0.6f),
+                                    style = TextStyle(fontSize = androidx.compose.ui.unit.TextUnit(11f, androidx.compose.ui.unit.TextUnitType.Sp))
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                                    items(semanticResults) { result ->
+                                        var resultHovered by remember { mutableStateOf(false) }
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .background(if (resultHovered) JewelTheme.globalColors.outlines.focused.copy(alpha = 0.15f) else Color.Transparent)
+                                                .onPointerEvent(PointerEventType.Enter) { resultHovered = true }
+                                                .onPointerEvent(PointerEventType.Exit) { resultHovered = false }
+                                                .clickable {
+                                                    val file = File(notesRoot, result.notePath)
+                                                    val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file)
+                                                    if (virtualFile != null) {
+                                                        FileEditorManager.getInstance(project).openFile(virtualFile, true)
+                                                        statusMessage = "Opened: ${result.noteTitle}"
+                                                    }
+                                                    showSemanticSearch = false
+                                                }
+                                                .border(1.dp, JewelTheme.globalColors.borders.normal.copy(alpha = 0.3f))
+                                                .padding(8.dp)
+                                        ) {
+                                            Column {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                ) {
+                                                    Text(result.noteTitle, style = TextStyle(fontWeight = FontWeight.Bold))
+                                                    Text(
+                                                        "%.2f".format(result.score),
+                                                        color = JewelTheme.contentColor.copy(alpha = 0.5f),
+                                                        style = TextStyle(fontSize = androidx.compose.ui.unit.TextUnit(11f, androidx.compose.ui.unit.TextUnitType.Sp))
+                                                    )
+                                                }
+                                                if (result.headingPath.isNotBlank()) {
+                                                    Text(
+                                                        result.headingPath,
+                                                        color = JewelTheme.contentColor.copy(alpha = 0.6f),
+                                                        style = TextStyle(fontSize = androidx.compose.ui.unit.TextUnit(11f, androidx.compose.ui.unit.TextUnitType.Sp))
+                                                    )
+                                                }
+                                                Text(
+                                                    result.excerpt.take(150) + if (result.excerpt.length > 150) "..." else "",
+                                                    color = JewelTheme.contentColor.copy(alpha = 0.8f),
+                                                    style = TextStyle(fontSize = androidx.compose.ui.unit.TextUnit(12f, androidx.compose.ui.unit.TextUnitType.Sp)),
+                                                    maxLines = 3
+                                                )
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                    }
+                                }
+                            } else if (semanticQuery.isNotBlank() && !isSemanticSearching) {
+                                Text("No matching notes found", color = JewelTheme.contentColor.copy(alpha = 0.6f))
+                            } else if (!VectorSearchManager.isIndexed()) {
+                                Text("No index built yet. Click the re-index button below.", color = JewelTheme.contentColor.copy(alpha = 0.6f))
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Divider(orientation = Orientation.Horizontal)
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            // Footer with stats and re-index button
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                val stats = VectorSearchManager.getIndexStats()
+                                Text(
+                                    if (stats.lastIndexedAt > 0L) "Index: ${stats.noteCount} notes, ${stats.chunkCount} chunks"
+                                    else "Not indexed",
+                                    color = JewelTheme.contentColor.copy(alpha = 0.5f),
+                                    style = TextStyle(fontSize = androidx.compose.ui.unit.TextUnit(11f, androidx.compose.ui.unit.TextUnitType.Sp))
+                                )
+                                TooltipArea(
+                                    tooltip = {
+                                        Box(modifier = Modifier
+                                            .background(popupBackground)
+                                            .border(1.dp, JewelTheme.globalColors.borders.normal)
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text("Re-index all notes")
+                                        }
+                                    }
+                                ) {
+                                    IconButton(onClick = {
+                                        statusMessage = "Re-indexing..."
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            val result = VectorSearchManager.reindex(notesRoot) { indexed, total ->
+                                                statusMessage = "Indexing: $indexed/$total notes..."
+                                            }
+                                            withContext(Dispatchers.Main) {
+                                                statusMessage = "Re-indexed ${result.indexedCount} notes, ${result.totalChunks} chunks"
+                                            }
+                                        }
+                                    }) {
+                                        Icon(AllIconsKeys.Actions.Refresh, contentDescription = "Re-index")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                LaunchedEffect(showSemanticSearch) {
+                    if (showSemanticSearch) {
+                        semanticFocusRequester.requestFocus()
+                    }
+                }
             }
 
             if (contextMenuVisible && contextMenuTarget != null) {

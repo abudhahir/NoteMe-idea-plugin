@@ -71,8 +71,28 @@ class NoteMeSettingsConfigurable : Configurable {
             }
         }
 
+        val wasChromaEnabled = settings.state.chromaDbEnabled
         settings.state.chromaDbEnabled = chromaDbCheckBox?.isSelected ?: false
         settings.state.reindexOnSync = reindexCheckBox?.isSelected ?: false
+
+        // First-enable: prompt to build search index
+        if (!wasChromaEnabled && settings.state.chromaDbEnabled) {
+            val buildNow = Messages.showYesNoDialog(
+                "Build search index now?\n\nThis may take a moment for large note collections.",
+                "ChromaDB Indexing",
+                "Build Now",
+                "Later",
+                Messages.getQuestionIcon()
+            )
+            if (buildNow == Messages.YES) {
+                val notesRoot = settings.notesRoot
+                Thread {
+                    VectorSearchManager.indexAllNotes(notesRoot)
+                }.start()
+            }
+        }
+
+        settings.notifySettingsChanged()
     }
 
     override fun reset() {
