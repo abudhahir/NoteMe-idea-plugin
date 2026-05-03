@@ -23,6 +23,7 @@ dependencies {
 
         // Add plugin dependencies for compilation here:
         bundledPlugin("org.intellij.plugins.markdown")
+        bundledPlugin("Git4Idea")
 
         composeUI()
     }

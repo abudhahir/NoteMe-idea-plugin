@@ -8,7 +8,13 @@ import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2Embedding
 object EmbeddingService {
 
     private val model: EmbeddingModel by lazy {
-        AllMiniLmL6V2EmbeddingModel()
+        val originalCL = Thread.currentThread().contextClassLoader
+        try {
+            Thread.currentThread().contextClassLoader = AllMiniLmL6V2EmbeddingModel::class.java.classLoader
+            AllMiniLmL6V2EmbeddingModel()
+        } finally {
+            Thread.currentThread().contextClassLoader = originalCL
+        }
     }
 
     fun embed(text: String): FloatArray {

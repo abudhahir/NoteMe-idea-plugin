@@ -866,7 +866,7 @@ private fun MyToolWindowContent(project: Project) {
                 ) {
                     Box(
                         modifier = Modifier
-                            .width(450.dp)
+                            .width(500.dp)
                             .background(popupBackground)
                             .border(1.dp, JewelTheme.globalColors.borders.normal)
                             .padding(12.dp)
@@ -927,10 +927,25 @@ private fun MyToolWindowContent(project: Project) {
                                     cursorBrush = SolidColor(JewelTheme.contentColor),
                                     singleLine = true,
                                     decorationBox = { inner ->
-                                        if (semanticQuery.isEmpty()) {
-                                            Text("Type a question and press Enter...", color = JewelTheme.contentColor.copy(alpha = 0.5f))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(modifier = Modifier.weight(1f)) {
+                                                if (semanticQuery.isEmpty()) {
+                                                    Text("Type a question and press Enter...", color = JewelTheme.contentColor.copy(alpha = 0.5f))
+                                                }
+                                                inner()
+                                            }
+                                            if (semanticQuery.isNotEmpty()) {
+                                                IconButton(onClick = {
+                                                    semanticQuery = ""
+                                                    semanticResults = emptyList()
+                                                }) {
+                                                    Icon(AllIconsKeys.Actions.Close, contentDescription = "Clear")
+                                                }
+                                            }
                                         }
-                                        inner()
                                     }
                                 )
                             }

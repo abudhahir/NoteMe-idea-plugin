@@ -15,8 +15,12 @@ import java.io.File
 )
 class NoteMeSettings : PersistentStateComponent<NoteMeSettings.State> {
 
+    enum class SourceType { LOCAL, GIT }
+
     data class State(
         var notesRootPath: String = File(System.getProperty("user.home"), "NoteMeNotes").absolutePath,
+        var sourceType: SourceType = SourceType.LOCAL,
+        var gitRepoUrl: String = "",
         var chromaDbEnabled: Boolean = false,
         var reindexOnSync: Boolean = false
     )
