@@ -10,6 +10,22 @@ A note management plugin that lives inside your IDE. Create, organise, and searc
 - Displays all notes as a hierarchical tree, driven by the heading structure in `~/NoteMeNotes/index.md`
 - Folder nodes correspond to Markdown headings (`#`, `##`); leaf nodes are individual note files
 - Hover over any node to see its full path on disk as a tooltip
+- **Broken-link indicator** — notes whose files are missing on disk appear dimmed; hover to reveal a remove button that cleans the dangling entry from the index
+- **Disk-sourced indicator** — notes discovered via Sync from Disk show a small upload icon badge so you can distinguish them from manually created notes
+
+### Toolbar Actions
+
+The tool window toolbar (top row) provides quick access to every major action:
+
+| Icon | Action | Description |
+|---|---|---|
+| **+** (Add) | Add Note | Enter a note name inline, pick a topic heading, and the note is created and opened |
+| **Magnifier** (Search) | Search Notes | Opens a text filter bar — matches note titles and full file content |
+| **Trash** (Delete) | Delete Selected | Deletes the currently selected note with a confirmation dialog |
+| **Binoculars** (Find) | Semantic Search | Opens the ChromaDB semantic search popup (requires ChromaDB enabled in settings) |
+| **List Files** | Open Index | Opens `index.md` (the landing page / source of truth) directly in the editor |
+| **Sync** | Sync Notes | Presents a dialog to choose Sync from Disk or Sync from Index |
+| **Gear** (Settings) | Open Settings | Jumps directly to **Settings > Tools > NoteMe** |
 
 ### Add Note (Tool Window)
 - Click the **+** icon in the tool window toolbar to enter a note name inline
@@ -40,16 +56,25 @@ A note management plugin that lives inside your IDE. Create, organise, and searc
 
 ### Settings
 - **Settings > Tools > NoteMe** or click the **gear icon** in the toolbar
-- **Notes root directory** — configurable path (default: `~/NoteMeNotes/`)
+- **Notes source** — choose between **Local** (folder on disk) or **Git** (clone a remote repository)
+- **Notes root directory** — configurable path for local source (default: `~/NoteMeNotes/`)
+- **Git repository URL** — when Git source is selected, enter the remote URL; the plugin clones the repo using IntelliJ's built-in Git integration and sets the clone directory as the notes root
 - **Enable file-based ChromaDB indexing** — gates the semantic search feature
 - **Re-index notes on sync** — automatically rebuilds search index after Sync from Disk
 
+### Git Repository Source
+- In settings, select the **Git** radio button and enter a repository URL (e.g. `https://github.com/user/notes.git`)
+- On apply, the plugin prompts you to choose a parent directory, then clones the repository using IntelliJ's Git4Idea integration with a progress dialog
+- If the target directory already exists, you can choose to use it as-is without re-cloning
+- The cloned directory becomes the notes root — all notes are read from and written to it
+- Switching back to **Local** restores the standard folder-based workflow
+
 ### Right-Click Context Menu
-Right-click any node in the tree for quick actions:
+Right-click any note node in the tree for quick actions:
 
 | Action | Description |
 |---|---|
-| Rename | Renames the note file and updates the link in `index.md` |
+| Rename | Renames the note file on disk and updates the link in `index.md` |
 | Delete | Deletes the file with a confirmation dialog and removes its index entry |
 | Copy Path | Copies the absolute file path to the clipboard |
 | Open in File System | Reveals the file or folder in Finder / Explorer |
@@ -90,6 +115,9 @@ fun processPayment(order: Order): Result {
 ```
 
 The `file://` link opens the source file in the editor. For line-precise navigation back to the exact selection, open **View → Tool Windows → Bookmarks**.
+
+### Status Bar
+The bottom of the tool window displays a contextual status message — showing sync results (headings/notes added, missing files detected), search result counts, error messages, and the current notes root path.
 
 ### Auto Tree Refresh
 The tool window tree updates automatically whenever a note is added via the keyboard shortcut, even if the tool window was already open in the background.
