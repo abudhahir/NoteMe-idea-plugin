@@ -214,6 +214,32 @@ private fun MyToolWindowContent(project: Project) {
     var showHeadingPicker by remember { mutableStateOf(false) }
     val addFocusRequester = remember { FocusRequester() }
 
+    // Rich text editor state
+    var editorMode by remember { mutableStateOf(false) }
+    var editorSelectedNote by remember { mutableStateOf<String?>(null) }
+
+    fun firstNoteFromTree(data: List<Any>): String? {
+        data.forEach { item ->
+            when (item) {
+                is String -> return item
+                is Pair<*, *> -> {
+                    @Suppress("UNCHECKED_CAST")
+                    val nested = item.second as? List<Any> ?: emptyList()
+                    val nestedFirst = firstNoteFromTree(nested)
+                    if (nestedFirst != null) return nestedFirst
+                }
+            }
+        }
+        return null
+    }
+
+    fun findAnyMarkdownFile(): String? {
+        val mdFiles = notesRoot.listFiles { file ->
+            file.isFile && file.extension == "md"
+        } ?: emptyArray()
+        return mdFiles.firstOrNull()?.nameWithoutExtension
+    }
+
     fun findFileForElement(data: String, dir: File): File? {
         val items = dir.listFiles() ?: return null
         for (item in items) {
@@ -231,16 +257,29 @@ private fun MyToolWindowContent(project: Project) {
         // Prefer the index-resolved path; fall back to filesystem scan if not yet indexed
         val file = IndexManager.getFilePathForNote(notesRoot, leafName)
             ?: findFileForElement(leafName, notesRoot)
-        if (file == null) {
-            statusMessage = "File not found: $leafName"
+            ?: File(notesRoot, "$leafName.md")  // Last resort: assume .md file in root
+
+        println("[NoteMe] openMarkdownFile: leafName=$leafName, file exists=${file.exists()}, path=${file.absolutePath}")
+
+        if (!file.exists()) {
+            statusMessage = "File not found: ${file.absolutePath}"
+            // Try to find it anywhere in the tree
+            val foundFile = findFileForElement(leafName, notesRoot)
+            if (foundFile != null) {
+                openMarkdownFile(leafName)  // Retry with found file
+                return
+            }
             return
         }
+
         val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file)
         if (virtualFile != null) {
             FileEditorManager.getInstance(project).openFile(virtualFile, true)
             statusMessage = "Opened: $leafName"
+            println("[NoteMe] File opened: $leafName")
         } else {
-            statusMessage = "Cannot open: $leafName"
+            statusMessage = "Cannot open file in IDE: $leafName (VFS refresh failed)"
+            println("[NoteMe] VFS refresh failed for: ${file.absolutePath}")
         }
     }
 
@@ -659,6 +698,36 @@ private fun MyToolWindowContent(project: Project) {
                                 .border(1.dp, JewelTheme.globalColors.borders.normal)
                                 .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
+                            Text(if (editorMode) "Close rich editor" else "Open rich editor")
+                        }
+                    }
+                ) {
+                    IconButton(onClick = {
+                        val selectedLeaf = (selectedElement as? Tree.Element.Leaf)?.data
+                        val fallbackLeaf = firstNoteFromTree(treeData)
+                        val anyFile = findAnyMarkdownFile()
+                        val targetNote = selectedLeaf ?: editorSelectedNote ?: fallbackLeaf ?: anyFile
+                        if (editorMode) {
+                            editorMode = false
+                            statusMessage = "Rich editor closed"
+                        } else if (targetNote != null) {
+                            editorSelectedNote = targetNote
+                            editorMode = true
+                            statusMessage = "Rich editor opened for '$targetNote'"
+                        } else {
+                            statusMessage = "No markdown notes found in ${notesRoot.absolutePath}"
+                        }
+                    }, enabled = true) {
+                        Icon(AllIconsKeys.Actions.Edit, contentDescription = "Edit")
+                    }
+                }
+                TooltipArea(
+                    tooltip = {
+                        Box(modifier = Modifier
+                                .background(popupBackground)
+                                .border(1.dp, JewelTheme.globalColors.borders.normal)
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
                             Text("Delete selected")
                         }
                     }
@@ -716,128 +785,280 @@ private fun MyToolWindowContent(project: Project) {
 
             Divider(orientation = Orientation.Horizontal)
 
-            LazyTree(
-                tree = filteredTreeData,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                onElementClick = {
-                    selectedElement = it
-                    if (it is Tree.Element.Leaf) {
-                        openMarkdownFile(it.data)
+            // Conditional layout: editor mode or tree view
+            if (editorMode) {
+                // Split-pane layout with editor on top and tree on bottom
+                Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    // Editor pane (60% height)
+                    Box(modifier = Modifier.weight(0.6f).fillMaxWidth()) {
+                        RichTextEditor(
+                            selectedNote = editorSelectedNote,
+                            notesRoot = notesRoot,
+                            onClose = { editorMode = false }
+                        )
                     }
-                },
-                treeState = treeState,
-                onElementDoubleClick = {},
-                onSelectionChange = {
-                    val last = it.lastOrNull()
-                    selectedElement = last
-                },
-                interactionSource = remember { MutableInteractionSource() }
-            ) { element ->
-                val nodePath = remember(element.data) {
-                    if (element is Tree.Element.Node<*>) {
-                        val dirPath = IndexManager.getHeadingDirPath(notesRoot, element.data)
-                        if (dirPath != null) File(notesRoot, dirPath).absolutePath else notesRoot.absolutePath
-                    } else {
-                        IndexManager.getFilePathForNote(notesRoot, element.data)?.absolutePath
-                            ?: findFileForElement(element.data, notesRoot)?.absolutePath
-                            ?: "Location unknown"
-                    }
-                }
 
-                val isMissing = element.data in missingFileTitles
-                val isDiskSourced = when (element) {
-                    is Tree.Element.Node<*> -> element.data in diskSourcedHeadings
-                    is Tree.Element.Leaf<*> -> element.data in diskSourcedNotes
-                    else -> false
-                }
-                var rowHovered by remember(element.data) { mutableStateOf(false) }
-                var elementPosition by remember(element.data) { mutableStateOf(IntOffset.Zero) }
+                    Divider(orientation = Orientation.Horizontal)
 
-                TooltipArea(
-                    tooltip = {
-                        Box(modifier = Modifier
-                            .background(popupBackground)
-                            .border(1.dp, JewelTheme.globalColors.borders.normal)
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                        ) {
-                            Text(if (isMissing) "$nodePath (file missing)" else nodePath)
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                        .onGloballyPositioned { coordinates ->
-                            elementPosition = coordinates.positionInWindow().round()
-                        }
-                        .onPointerEvent(PointerEventType.Enter) { rowHovered = true }
-                        .onPointerEvent(PointerEventType.Exit) { rowHovered = false }
-                        .onPointerEvent(PointerEventType.Release) {
-                            if (it.button == PointerButton.Secondary || it.buttons.isSecondaryPressed) {
-                                contextMenuTarget = element.data
-                                val position = it.changes.first().position
-                                contextMenuOffset = IntOffset(
-                                    (elementPosition.x + position.x).toInt(),
-                                    (elementPosition.y + position.y).toInt()
-                                )
-                                contextMenuVisible = true
+                    // Tree pane (40% height)
+                    Box(modifier = Modifier.weight(0.4f).fillMaxWidth()) {
+                        LazyTree(
+                            tree = filteredTreeData,
+                            modifier = Modifier.fillMaxSize(),
+                            onElementClick = {
+                                selectedElement = it
+                                if (it is Tree.Element.Leaf) {
+                                    editorSelectedNote = it.data
+                                }
+                            },
+                            treeState = treeState,
+                            onElementDoubleClick = {},
+                            onSelectionChange = {
+                                val last = it.lastOrNull()
+                                selectedElement = last
+                            },
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) { element ->
+                            val nodePath = remember(element.data) {
+                                if (element is Tree.Element.Node<*>) {
+                                    val dirPath = IndexManager.getHeadingDirPath(notesRoot, element.data)
+                                    if (dirPath != null) File(notesRoot, dirPath).absolutePath else notesRoot.absolutePath
+                                } else {
+                                    IndexManager.getFilePathForNote(notesRoot, element.data)?.absolutePath
+                                        ?: findFileForElement(element.data, notesRoot)?.absolutePath
+                                        ?: "Location unknown"
+                                }
+                            }
+
+                            val isMissing = element.data in missingFileTitles
+                            val isDiskSourced = when (element) {
+                                is Tree.Element.Node<*> -> element.data in diskSourcedHeadings
+                                is Tree.Element.Leaf<*> -> element.data in diskSourcedNotes
+                                else -> false
+                            }
+                            var rowHovered by remember(element.data) { mutableStateOf(false) }
+                            var elementPosition by remember(element.data) { mutableStateOf(IntOffset.Zero) }
+
+                            TooltipArea(
+                                tooltip = {
+                                    Box(modifier = Modifier
+                                        .background(popupBackground)
+                                        .border(1.dp, JewelTheme.globalColors.borders.normal)
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(if (isMissing) "$nodePath (file missing)" else nodePath)
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                                    .onGloballyPositioned { coordinates ->
+                                        elementPosition = coordinates.positionInWindow().round()
+                                    }
+                                    .onPointerEvent(PointerEventType.Enter) { rowHovered = true }
+                                    .onPointerEvent(PointerEventType.Exit) { rowHovered = false }
+                                    .onPointerEvent(PointerEventType.Release) {
+                                        if (it.button == PointerButton.Secondary || it.buttons.isSecondaryPressed) {
+                                            contextMenuTarget = element.data
+                                            val position = it.changes.first().position
+                                            contextMenuOffset = IntOffset(
+                                                (elementPosition.x + position.x).toInt(),
+                                                (elementPosition.y + position.y).toInt()
+                                            )
+                                            contextMenuVisible = true
+                                        }
+                                    }
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    modifier = Modifier.padding(vertical = 2.dp, horizontal = 4.dp).fillMaxWidth()
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    ) {
+                                        val iconKey = if (element is Tree.Element.Node<*>) {
+                                            AllIconsKeys.Nodes.Folder
+                                        } else {
+                                            AllIconsKeys.FileTypes.Text
+                                        }
+                                        Icon(
+                                            key = iconKey,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = element.data,
+                                            color = if (isMissing) JewelTheme.contentColor.copy(alpha = 0.4f)
+                                                    else JewelTheme.contentColor
+                                        )
+                                        if (isDiskSourced) {
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Icon(
+                                                key = AllIconsKeys.Actions.Upload,
+                                                contentDescription = "From disk",
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                    if (isMissing && rowHovered) {
+                                        IconButton(
+                                            onClick = {
+                                                val pair = missingFilePairs.firstOrNull { it.first == element.data }
+                                                if (pair != null) {
+                                                    coroutineScope.launch(Dispatchers.IO) {
+                                                        IndexManager.removeFromIndex(notesRoot, pair.first, pair.second)
+                                                        withContext(Dispatchers.Main) {
+                                                            val remaining = missingFilePairs - pair
+                                                            missingFilePairs = remaining
+                                                            missingFileTitles = remaining.map { it.first }.toSet()
+                                                            refreshTree()
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            modifier = Modifier.size(16.dp)
+                                        ) {
+                                            Icon(
+                                                key = AllIconsKeys.Actions.Cancel,
+                                                contentDescription = "Remove broken link",
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.padding(vertical = 2.dp, horizontal = 4.dp).fillMaxWidth()
+                    }
+                }
+            } else {
+                // Full tree view
+                LazyTree(
+                    tree = filteredTreeData,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    onElementClick = {
+                        selectedElement = it
+                        if (it is Tree.Element.Leaf) {
+                            editorSelectedNote = it.data
+                            if (!editorMode) {
+                                openMarkdownFile(it.data)
+                            }
+                        }
+                    },
+                    treeState = treeState,
+                    onElementDoubleClick = {},
+                    onSelectionChange = {
+                        val last = it.lastOrNull()
+                        selectedElement = last
+                    },
+                    interactionSource = remember { MutableInteractionSource() }
+                ) { element ->
+                    val nodePath = remember(element.data) {
+                        if (element is Tree.Element.Node<*>) {
+                            val dirPath = IndexManager.getHeadingDirPath(notesRoot, element.data)
+                            if (dirPath != null) File(notesRoot, dirPath).absolutePath else notesRoot.absolutePath
+                        } else {
+                            IndexManager.getFilePathForNote(notesRoot, element.data)?.absolutePath
+                                ?: findFileForElement(element.data, notesRoot)?.absolutePath
+                                ?: "Location unknown"
+                        }
+                    }
+
+                    val isMissing = element.data in missingFileTitles
+                    val isDiskSourced = when (element) {
+                        is Tree.Element.Node<*> -> element.data in diskSourcedHeadings
+                        is Tree.Element.Leaf<*> -> element.data in diskSourcedNotes
+                        else -> false
+                    }
+                    var rowHovered by remember(element.data) { mutableStateOf(false) }
+                    var elementPosition by remember(element.data) { mutableStateOf(IntOffset.Zero) }
+
+                    TooltipArea(
+                        tooltip = {
+                            Box(modifier = Modifier
+                                .background(popupBackground)
+                                .border(1.dp, JewelTheme.globalColors.borders.normal)
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(if (isMissing) "$nodePath (file missing)" else nodePath)
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                            .onGloballyPositioned { coordinates ->
+                                elementPosition = coordinates.positionInWindow().round()
+                            }
+                            .onPointerEvent(PointerEventType.Enter) { rowHovered = true }
+                            .onPointerEvent(PointerEventType.Exit) { rowHovered = false }
+                            .onPointerEvent(PointerEventType.Release) {
+                                if (it.button == PointerButton.Secondary || it.buttons.isSecondaryPressed) {
+                                    contextMenuTarget = element.data
+                                    val position = it.changes.first().position
+                                    contextMenuOffset = IntOffset(
+                                        (elementPosition.x + position.x).toInt(),
+                                        (elementPosition.y + position.y).toInt()
+                                    )
+                                    contextMenuVisible = true
+                                }
+                            }
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f, fill = false)
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.padding(vertical = 2.dp, horizontal = 4.dp).fillMaxWidth()
                         ) {
-                            val iconKey = if (element is Tree.Element.Node<*>) {
-                                AllIconsKeys.Nodes.Folder
-                            } else {
-                                AllIconsKeys.FileTypes.Text
-                            }
-                            Icon(
-                                key = iconKey,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = element.data,
-                                color = if (isMissing) JewelTheme.contentColor.copy(alpha = 0.4f)
-                                        else JewelTheme.contentColor
-                            )
-                            if (isDiskSourced) {
-                                Spacer(modifier = Modifier.width(4.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f, fill = false)
+                            ) {
+                                val iconKey = if (element is Tree.Element.Node<*>) {
+                                    AllIconsKeys.Nodes.Folder
+                                } else {
+                                    AllIconsKeys.FileTypes.Text
+                                }
                                 Icon(
-                                    key = AllIconsKeys.Actions.Upload,
-                                    contentDescription = "From disk",
+                                    key = iconKey,
+                                    contentDescription = null,
                                     modifier = Modifier.size(16.dp)
                                 )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = element.data,
+                                    color = if (isMissing) JewelTheme.contentColor.copy(alpha = 0.4f)
+                                            else JewelTheme.contentColor
+                                )
+                                if (isDiskSourced) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        key = AllIconsKeys.Actions.Upload,
+                                        contentDescription = "From disk",
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
                             }
-                        }
-                        if (isMissing && rowHovered) {
-                            IconButton(
-                                onClick = {
-                                    val pair = missingFilePairs.firstOrNull { it.first == element.data }
-                                    if (pair != null) {
-                                        coroutineScope.launch(Dispatchers.IO) {
-                                            IndexManager.removeFromIndex(notesRoot, pair.first, pair.second)
-                                            withContext(Dispatchers.Main) {
-                                                val remaining = missingFilePairs - pair
-                                                missingFilePairs = remaining
-                                                missingFileTitles = remaining.map { it.first }.toSet()
-                                                refreshTree()
+                            if (isMissing && rowHovered) {
+                                IconButton(
+                                    onClick = {
+                                        val pair = missingFilePairs.firstOrNull { it.first == element.data }
+                                        if (pair != null) {
+                                            coroutineScope.launch(Dispatchers.IO) {
+                                                IndexManager.removeFromIndex(notesRoot, pair.first, pair.second)
+                                                withContext(Dispatchers.Main) {
+                                                    val remaining = missingFilePairs - pair
+                                                    missingFilePairs = remaining
+                                                    missingFileTitles = remaining.map { it.first }.toSet()
+                                                    refreshTree()
+                                                }
                                             }
                                         }
-                                    }
-                                },
-                                modifier = Modifier.size(16.dp)
-                            ) {
-                                Icon(
-                                    key = AllIconsKeys.Actions.Cancel,
-                                    contentDescription = "Remove broken link",
-                                    modifier = Modifier.size(12.dp)
-                                )
+                                    },
+                                    modifier = Modifier.size(16.dp)
+                                ) {
+                                    Icon(
+                                        key = AllIconsKeys.Actions.Cancel,
+                                        contentDescription = "Remove broken link",
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
                             }
                         }
                     }
