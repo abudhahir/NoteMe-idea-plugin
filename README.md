@@ -88,6 +88,28 @@ Right-click any note node in the tree for quick actions:
 
 Both actions are also accessible from the editor context bar, editor right-click menu, nav bar toolbar, main toolbar, and Markdown editor toolbars.
 
+### Markdown Slash Commands
+
+In any editable Markdown file, type `/` to open an IntelliJ-native command menu at the caret. Continue typing to filter by command name or alias, then accept with Enter, Tab, or a pointer click. Escape cancels without changing the document. Accepted commands are applied as one undoable editor operation and restore the resulting caret or selection.
+
+Built-in commands:
+
+| Command | Aliases | Result |
+|---|---|---|
+| Heading 1, Heading 2, Heading 3 | `h1`, `h2`, `h3` | Add or normalize a heading prefix |
+| Bullet List | `bullet`, `ul` | Add a bullet list prefix |
+| Numbered List | `ordered`, `ol` | Add a numbered list prefix |
+| Task Item | `task`, `todo` | Add a checkbox list item |
+| Block Quote | `quote` | Add a block quote prefix |
+| Bold | `strong` | Insert `**` delimiters |
+| Italic | `em` | Insert `*` delimiters |
+| Inline Code | `code` | Insert backtick delimiters |
+| Code Block | `fence`, `pre` | Insert a language-neutral fenced block |
+| Link | `url` | Insert a Markdown link and select its URL field |
+| Horizontal Rule | `hr`, `rule` | Insert `---` |
+
+Commands are available in Markdown prose at line starts, after whitespace, and after prose. Completion is suppressed for non-Markdown files, read-only editors, URLs and paths, link destinations, escaped slashes, inline code, and fenced code blocks. The provider extension point allows other plugins to contribute commands; user-defined command templates and their settings UI are future work, not part of this release.
+
 ### Source Capture When Creating Notes via Shortcut
 
 When `Ctrl+Alt+N` is pressed while an editor file is open, the created note automatically includes a source context block at the bottom:

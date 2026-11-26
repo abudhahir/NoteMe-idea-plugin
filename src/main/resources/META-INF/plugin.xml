@@ -23,6 +23,13 @@
     <depends>org.intellij.plugins.markdown</depends>
     <depends>Git4Idea</depends>
 
+    <extensionPoints>
+        <extensionPoint
+                qualifiedName="com.cleveloper.notemeideaplugin.markdownCommandProvider"
+                interface="com.cleveloper.notemeideaplugin.MarkdownCommandProvider"
+                dynamic="true"/>
+    </extensionPoints>
+
     <resource-bundle>messages.MyMessageBundle</resource-bundle>
     <!-- Extensions defined by the plugin.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
@@ -37,6 +44,11 @@
                                  instance="com.cleveloper.notemeideaplugin.NoteMeSettingsConfigurable"
                                  id="com.cleveloper.notemeideaplugin.NoteMeSettingsConfigurable"
                                  displayName="NoteMe"/>
+        <typedHandler implementation="com.cleveloper.notemeideaplugin.MarkdownSlashCommandTypedHandler"/>
+        <completion.contributor language="Markdown"
+                                implementationClass="com.cleveloper.notemeideaplugin.MarkdownSlashCommandCompletionContributor"/>
+        <markdownCommandProvider
+                implementation="com.cleveloper.notemeideaplugin.BuiltInMarkdownCommandProviderExtension"/>
     </extensions>
 
     <actions>
